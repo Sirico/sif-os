@@ -49,6 +49,7 @@
     curl
     htop
     git
+    distrobox
     networkmanagerapplet
     gnome-console
     nautilus
