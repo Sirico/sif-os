@@ -2,10 +2,10 @@
 # Template for Windows VM connections
 
 [remmina]
-name=Windows VM - Proxmox
+name=Windows VM6 - Proxmox
 protocol=RDP
-server=192.168.1.100:3389
-username=
+server=192.168.1.38:3389
+username=admin
 password=
 domain=
 resolution_mode=1
