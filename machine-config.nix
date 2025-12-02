@@ -8,11 +8,11 @@
   # Machine hostname - set during deployment
   # Default hostname for this generated config; allow higher-priority overrides
   # from the flake entries (mkDefault avoids conflicts during flake checks).
-  networking.hostName = lib.mkDefault "sifos-thin-client-6";
+  networking.hostName = lib.mkDefault "sifos-thin-client";
   
   # Tailscale IP for this machine (update after first tailscale up)
   # This helps document the Tailscale IP for remote RDP/SSH access
-  sifos.tailscale.advertiseAddress = "100.78.103.61";
+  sifos.tailscale.advertiseAddress = lib.mkDefault null;
   
   # Machine type selection is handled in flake outputs; keep this file for
   # per-machine knobs (hostname, tailscale, overrides). If using a non-flake

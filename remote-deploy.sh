@@ -26,6 +26,7 @@ HOSTNAME=""
 MACHINE_TYPE=""
 APPLY_NOW=false
 INTERACTIVE=true
+CONTROL_PATH=""
 
 usage() {
     echo "Usage: $0 -t <target-ip> [-h <hostname>] [-m <machine-type>] [-u <user>] [-a] [-y]"
@@ -131,6 +132,11 @@ echo "Mode: $([ "$APPLY_NOW" = true ] && echo "Apply immediately" || echo "Test 
 echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo ""
 
+# SSH multiplexing to avoid repeated password prompts
+CONTROL_PATH="/tmp/sifos-ssh-${REMOTE_HOST//[^A-Za-z0-9._-]/_}"
+SSH_COMMON_OPTS=( -o ControlMaster=auto -o ControlPersist=600 -o ControlPath="$CONTROL_PATH" )
+SSH_CMD=( ssh "${SSH_COMMON_OPTS[@]}" "$REMOTE_USER@$REMOTE_HOST" )
+
 # Check connectivity
 echo -e "${YELLOW}Checking connectivity...${NC}"
 if ! ping -c 1 -W 2 "$REMOTE_HOST" &>/dev/null; then
@@ -139,10 +145,15 @@ if ! ping -c 1 -W 2 "$REMOTE_HOST" &>/dev/null; then
 fi
 echo -e "${GREEN}✓ Host reachable${NC}"
 
+# Start control master to reuse auth
+if ! ssh -o ControlPath="$CONTROL_PATH" -O check "$REMOTE_USER@$REMOTE_HOST" 2>/dev/null; then
+    ssh "${SSH_COMMON_OPTS[@]}" -fnN "$REMOTE_USER@$REMOTE_HOST"
+fi
+
 # Deploy via SSH
 echo -e "${YELLOW}Deploying configuration from GitHub...${NC}"
 
-ssh -o ServerAliveInterval=60 "$REMOTE_USER@$REMOTE_HOST" bash << EOF
+"${SSH_CMD[@]}" -o ServerAliveInterval=60 bash << EOF
     set -e
     
     echo "Cloning/updating repository..."
@@ -199,18 +210,16 @@ ssh -o ServerAliveInterval=60 "$REMOTE_USER@$REMOTE_HOST" bash << EOF
     sudo cp -r branding/* /etc/sifos/branding/ 2>/dev/null || true
     sudo cp -r remmina-profiles/* /etc/nixos/remmina-profiles/ 2>/dev/null || true
     sudo cp -r remmina-profiles/* /etc/sifos/remmina-profiles/ 2>/dev/null || true
+    if [ -d nixos ]; then
+        sudo cp -r nixos /etc/nixos/
+    fi
     
     # Keep the existing hardware configuration
-    if [ ! -f /etc/nixos/nixos/hardware-configuration.nix ]; then
-        sudo mkdir -p /etc/nixos/nixos
-        if [ -f /etc/nixos/hardware-configuration.nix ]; then
-            sudo cp /etc/nixos/hardware-configuration.nix /etc/nixos/nixos/
-        else
-            echo "Generating hardware configuration..."
-            sudo nixos-generate-config --dir /tmp/hw-config
-            sudo cp /tmp/hw-config/hardware-configuration.nix /etc/nixos/nixos/
-        fi
-    fi
+    echo "Refreshing hardware configuration..."
+    sudo nixos-generate-config --dir /tmp/hw-config
+    sudo mkdir -p /etc/nixos/nixos
+    sudo cp /tmp/hw-config/hardware-configuration.nix /etc/nixos/nixos/
+    sudo cp /tmp/hw-config/hardware-configuration.nix /etc/nixos/
     
     echo ""
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -220,7 +229,7 @@ ssh -o ServerAliveInterval=60 "$REMOTE_USER@$REMOTE_HOST" bash << EOF
     
     if [ "$APPLY_NOW" = "true" ]; then
         echo "Applying configuration..."
-        sudo nixos-rebuild switch
+        sudo nixos-rebuild switch --no-flake
         echo ""
         echo "✓ Configuration applied!"
         echo ""
@@ -229,12 +238,12 @@ ssh -o ServerAliveInterval=60 "$REMOTE_USER@$REMOTE_HOST" bash << EOF
         echo "  - Reboot if needed: sudo reboot"
     else
         echo "Testing configuration..."
-        sudo nixos-rebuild test
+        sudo nixos-rebuild test --no-flake
         echo ""
         echo "✓ Configuration test successful!"
         echo ""
         echo "To apply permanently, run:"
-        echo "  sudo nixos-rebuild switch"
+        echo "  sudo nixos-rebuild switch --no-flake"
         echo ""
         echo "Or re-run this script with -a flag"
     fi
@@ -244,3 +253,6 @@ echo ""
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo -e "${GREEN}Deployment complete!${NC}"
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+
+# Close control master
+ssh -o ControlPath="$CONTROL_PATH" -O exit "$REMOTE_USER@$REMOTE_HOST" 2>/dev/null || true

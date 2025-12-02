@@ -2,12 +2,11 @@
 # Thin Client OS for Wyse 5070 and similar hardware
 # Designed for remote dispatch stations with RDP/Remmina access
 
-{ config, pkgs, ... }:
+{ config, pkgs, lib, ... }:
 
 {
   imports =
-    [ 
-      # ./nixos/hardware-configuration.nix
+    [
       ./modules/users.nix
       ./modules/remote-access.nix
       ./modules/printing.nix
@@ -16,7 +15,8 @@
       ./modules/branding.nix
       # Machine-specific config (hostname and machine type module)
       ./machine-config.nix
-    ];
+    ]
+    ++ lib.optional (builtins.pathExists ./nixos/hardware-configuration.nix) ./nixos/hardware-configuration.nix;
 
   # System Identity
   # Note: hostname is set in machine-config.nix per-machine

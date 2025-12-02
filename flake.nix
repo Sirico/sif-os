@@ -54,16 +54,41 @@
         };
     in
     {
-      packages.x86_64-linux.tsc-da210-barcode-driver = import ./packages/da210-driver.nix { inherit pkgs; };
+      packages.x86_64-linux =
+        {
+          tsc-da210-barcode-driver = import ./packages/da210-driver.nix { inherit pkgs; };
+        }
+        // {
+          # Convenience aliases so `nix build .#sifos-thin-client-4` works.
+          sifos-thin-client-4 = self.nixosConfigurations."sifos-thin-client-4".config.system.build.toplevel;
+          sifos-thin-client-6 = self.nixosConfigurations."sifos-thin-client-6".config.system.build.toplevel;
+          thin-client-4 = self.nixosConfigurations."thin-client-4".config.system.build.toplevel;
+          thin-client-6 = self.nixosConfigurations."thin-client-6".config.system.build.toplevel;
+        };
 
       # Machine configurations
       nixosConfigurations = {
         # Thin clients
+        "thin-client-4" = mkSifOSSystem "sifos-thin-client-4" ./machine-types/thin-client.nix [
+          ./nixos/hardware-configuration-thin-client-4.nix
+          ./machines/thin-client-4.nix
+          { sifos.tailscale.advertiseAddress = "100.71.208.113"; }
+        ];
+        "sifos-thin-client-4" = mkSifOSSystem "sifos-thin-client-4" ./machine-types/thin-client.nix [
+          ./nixos/hardware-configuration-thin-client-4.nix
+          ./machines/thin-client-4.nix
+          { sifos.tailscale.advertiseAddress = "100.71.208.113"; }
+        ];
+        # Thin clients
         "thin-client-6" = mkSifOSSystem "sifos-thin-client-6" ./machine-types/thin-client.nix [
           ./nixos/hardware-configuration-thin-client-6.nix
+          ./machines/thin-client-6.nix
+          { sifos.tailscale.advertiseAddress = "100.78.103.61"; }
         ];
         "sifos-thin-client-6" = mkSifOSSystem "sifos-thin-client-6" ./machine-types/thin-client.nix [
           ./nixos/hardware-configuration-thin-client-6.nix
+          ./machines/thin-client-6.nix
+          { sifos.tailscale.advertiseAddress = "100.78.103.61"; }
         ];
         
         # Office machines

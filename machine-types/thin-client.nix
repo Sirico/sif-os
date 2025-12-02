@@ -7,6 +7,7 @@
   nix.settings.require-sigs = false;
 
   imports = [
+    ../modules/networking/thin-clients-cups-firewall.nix
     ../modules/da210-setuid.nix
     ../modules/da210-driver.nix
     ../modules/printing-samba.nix
@@ -108,4 +109,12 @@
   systemd.targets.suspend.enable = false;
   systemd.targets.hibernate.enable = false;
   systemd.targets.hybrid-sleep.enable = false;
+
+  # CUPS + firewall defaults for thin clients; override printer URIs per host if needed.
+  thinClients.sifos = {
+    enable = true;
+  };
+
+  # Avoid socket activation conflicts on port 631; run cupsd as a regular service.
+  services.printing.startWhenNeeded = false;
 }

@@ -20,6 +20,7 @@ TARGET_IP=""
 HOSTNAME=""
 MACHINE_TYPE=""
 TAILSCALE_IP=""
+CONTROL_PATH=""
 
 log_info() {
     echo -e "${BLUE}ℹ${NC} $1"
@@ -107,6 +108,11 @@ if [ -z "$TARGET_IP" ] || [ -z "$HOSTNAME" ] || [ -z "$MACHINE_TYPE" ]; then
     usage
 fi
 
+# SSH multiplexing to avoid repeated password prompts
+CONTROL_PATH="/tmp/sifos-ssh-${TARGET_IP//[^A-Za-z0-9._-]/_}"
+SSH_COMMON_OPTS=( -o ControlMaster=auto -o ControlPersist=600 -o ControlPath="$CONTROL_PATH" )
+SSH_CMD=( ssh "${SSH_COMMON_OPTS[@]}" "$REMOTE_USER@$TARGET_IP" )
+
 # Validate machine type
 case "$MACHINE_TYPE" in
     thin-client|office|workstation|shop-kiosk|server|custom)
@@ -133,22 +139,28 @@ if [ "$confirm" != "yes" ]; then
     exit 0
 fi
 
+# Start control master to reuse auth for subsequent SSH calls
+if ! ssh -o ControlPath="$CONTROL_PATH" -O check "$REMOTE_USER@$TARGET_IP" 2>/dev/null; then
+    ssh "${SSH_COMMON_OPTS[@]}" -fnN "$REMOTE_USER@$TARGET_IP"
+fi
+
 # Step 1: Verify NixOS
 log_header "Step 1: Verifying NixOS Installation"
-if ! ssh "$REMOTE_USER@$TARGET_IP" "test -f /etc/NIXOS"; then
+if ! "${SSH_CMD[@]}" "test -f /etc/NIXOS"; then
     log_error "Target machine is not running NixOS"
+    ssh -o ControlPath="$CONTROL_PATH" -O exit "$REMOTE_USER@$TARGET_IP" 2>/dev/null || true
     exit 1
 fi
 log_success "Confirmed NixOS installation"
 
 # Step 2: Check connectivity and get system info
 log_header "Step 2: Gathering System Information"
-NIXOS_VERSION=$(ssh "$REMOTE_USER@$TARGET_IP" "nixos-version" 2>/dev/null || echo "unknown")
+NIXOS_VERSION=$("${SSH_CMD[@]}" "nixos-version" 2>/dev/null || echo "unknown")
 log_info "NixOS version: $NIXOS_VERSION"
 
 # Step 3: Backup existing hardware config
 log_header "Step 3: Backing Up Hardware Configuration"
-ssh "$REMOTE_USER@$TARGET_IP" "
+"${SSH_CMD[@]}" "
     if [ -f /etc/nixos/hardware-configuration.nix ]; then
         cp /etc/nixos/hardware-configuration.nix /etc/nixos/hardware-configuration.nix.backup
         echo 'Backed up existing hardware-configuration.nix'
@@ -158,7 +170,7 @@ log_success "Hardware configuration backed up"
 
 # Step 4: Clone repository
 log_header "Step 4: Installing SifOS Configuration"
-ssh "$REMOTE_USER@$TARGET_IP" "
+"${SSH_CMD[@]}" "
     # Remove old configs (keeping hardware config)
     cd /etc/nixos
     find . -maxdepth 1 -type f ! -name 'hardware-configuration.nix*' -delete
@@ -172,7 +184,17 @@ ssh "$REMOTE_USER@$TARGET_IP" "
     # Copy everything except .git to /etc/nixos
     cp -r * /etc/nixos/
     cp -r .gitignore /etc/nixos/ 2>/dev/null || true
+    # Ensure nixos/ directory is present (for hardware-configuration import)
+    if [ -d nixos ]; then
+        cp -r nixos /etc/nixos/
+    fi
     
+    # Refresh hardware config from this machine so root FS is defined
+    nixos-generate-config --dir /tmp/sifos-hw
+    mkdir -p /etc/nixos/nixos
+    cp /tmp/sifos-hw/hardware-configuration.nix /etc/nixos/hardware-configuration.nix
+    cp /tmp/sifos-hw/hardware-configuration.nix /etc/nixos/nixos/hardware-configuration.nix
+
     # Cleanup
     rm -rf /tmp/sifos-temp
     
@@ -221,18 +243,19 @@ MACHINE_CONFIG+="  # Machine type - determines which features are enabled
 }
 "
 
-echo "$MACHINE_CONFIG" | ssh "$REMOTE_USER@$TARGET_IP" "cat > /etc/nixos/machine-config.nix"
+echo "$MACHINE_CONFIG" | "${SSH_CMD[@]}" "cat > /etc/nixos/machine-config.nix"
 log_success "Machine configuration created"
 
 # Step 6: Apply configuration
 log_header "Step 6: Applying Configuration"
 log_warning "This will rebuild the system. This may take several minutes..."
 
-if ssh "$REMOTE_USER@$TARGET_IP" "nixos-rebuild switch"; then
+if "${SSH_CMD[@]}" "nixos-rebuild switch --no-flake"; then
     log_success "Configuration applied successfully"
 else
     log_error "Failed to apply configuration"
-    log_warning "You can try manually: ssh $REMOTE_USER@$TARGET_IP 'nixos-rebuild switch'"
+    log_warning "You can try manually: ssh $REMOTE_USER@$TARGET_IP 'nixos-rebuild switch --no-flake'"
+    ssh -o ControlPath="$CONTROL_PATH" -O exit "$REMOTE_USER@$TARGET_IP" 2>/dev/null || true
     exit 1
 fi
 
@@ -278,3 +301,6 @@ echo "  5. Future deployments: ./remote-deploy.sh -t sifos-$HOSTNAME -h $HOSTNAM
 
 echo ""
 log_success "Machine enrolled successfully! 🎉"
+
+# Close control master
+ssh -o ControlPath="$CONTROL_PATH" -O exit "$REMOTE_USER@$TARGET_IP" 2>/dev/null || true
