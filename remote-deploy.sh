@@ -227,9 +227,28 @@ echo -e "${YELLOW}Deploying configuration from GitHub...${NC}"
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     echo ""
     
+    # Ensure legacy nix build finds the right config/nixpkgs
+    NIX_PATH_LEGACY="nixos-config=/etc/nixos/configuration.nix:nixpkgs=/nix/var/nix/profiles/per-user/root/channels/nixos"
+    NIX_CONFIG_FLAKES="experimental-features = nix-command flakes"
+
+    # Prefer flake builds when the attr exists; fall back to legacy if not.
+    FLAKE_TARGET=""
+    for candidate in "sifos-$HOSTNAME" "$HOSTNAME"; do
+        if NIX_CONFIG="$NIX_CONFIG_FLAKES" nix eval "/etc/nixos#nixosConfigurations.${candidate}.config.system.build.toplevel" >/dev/null 2>&1; then
+            FLAKE_TARGET="$candidate"
+            break
+        fi
+    done
+
     if [ "$APPLY_NOW" = "true" ]; then
         echo "Applying configuration..."
-        sudo nixos-rebuild switch --no-flake
+        if [ -n "$FLAKE_TARGET" ]; then
+            echo "Using flake target: /etc/nixos#${FLAKE_TARGET}"
+            sudo NIX_CONFIG="$NIX_CONFIG_FLAKES" nixos-rebuild switch --flake /etc/nixos#"${FLAKE_TARGET}"
+        else
+            echo "Flake target not found; using legacy rebuild"
+            sudo NIX_PATH="$NIX_PATH_LEGACY" nixos-rebuild switch --no-flake -I nixos-config=/etc/nixos/configuration.nix
+        fi
         echo ""
         echo "✓ Configuration applied!"
         echo ""
@@ -238,12 +257,22 @@ echo -e "${YELLOW}Deploying configuration from GitHub...${NC}"
         echo "  - Reboot if needed: sudo reboot"
     else
         echo "Testing configuration..."
-        sudo nixos-rebuild test --no-flake
+        if [ -n "$FLAKE_TARGET" ]; then
+            echo "Using flake target: /etc/nixos#${FLAKE_TARGET}"
+            sudo NIX_CONFIG="$NIX_CONFIG_FLAKES" nixos-rebuild test --flake /etc/nixos#"${FLAKE_TARGET}"
+        else
+            echo "Flake target not found; using legacy rebuild"
+            sudo NIX_PATH="$NIX_PATH_LEGACY" nixos-rebuild test --no-flake -I nixos-config=/etc/nixos/configuration.nix
+        fi
         echo ""
         echo "✓ Configuration test successful!"
         echo ""
         echo "To apply permanently, run:"
-        echo "  sudo nixos-rebuild switch --no-flake"
+        if [ -n "$FLAKE_TARGET" ]; then
+            echo "  sudo NIX_CONFIG=\"$NIX_CONFIG_FLAKES\" nixos-rebuild switch --flake /etc/nixos#${FLAKE_TARGET}"
+        else
+            echo "  sudo NIX_PATH=\"$NIX_PATH_LEGACY\" nixos-rebuild switch --no-flake -I nixos-config=/etc/nixos/configuration.nix"
+        fi
         echo ""
         echo "Or re-run this script with -a flag"
     fi

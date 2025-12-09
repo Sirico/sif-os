@@ -81,7 +81,9 @@ in
   };
 
   config = lib.mkIf cfg.enable {
-    networking.firewall.allowedTCPPorts = lib.mkDefault cfg.openTcpPorts;
+    # Force-open the thin-client ports (SSH/RDP/IPP) even if another module set
+    # a narrower firewall default earlier.
+    networking.firewall.allowedTCPPorts = lib.mkForce cfg.openTcpPorts;
 
     services.avahi = {
       enable = lib.mkDefault true;
@@ -94,6 +96,7 @@ in
 
     services.printing = {
       enable = lib.mkDefault true;
+      openFirewall = lib.mkDefault true;
       webInterface = lib.mkDefault true;
       defaultShared = lib.mkForce true;
       browsing = lib.mkForce true;
